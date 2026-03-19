@@ -39,6 +39,12 @@ def create_fa_backend(config: ModelConfig):
 
     return FlashAttentionBackend(config)
 
+@SUPPORTED_ATTENTION_BACKENDS.register("fa4")
+def create_fa4_backend(config: ModelConfig):
+    from .fa4 import FlashAttention4Backend
+
+    return FlashAttention4Backend(config)
+
 
 def validate_attn_backend(backend: str, allow_auto: bool = True):
     if backend != "auto":
