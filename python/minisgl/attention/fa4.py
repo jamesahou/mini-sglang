@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class FACaptureData(BaseCaptureData):
-    pass
+    out: torch.Tensor
 
 
 @dataclass
@@ -53,6 +53,7 @@ class FlashAttention4Backend(BaseAttnBackend):
         metadata = batch.attn_metadata
         assert isinstance(metadata, FAMetadata)
         self.kvcache.store_kv(k, v, batch.out_loc, layer_id)
+        out = self.capture.out[: batch.padded_size] if self.capture is not None else None
         return _fa_sgl_impl(
             q=q,
             k_cache=self.kvcache.k_cache(layer_id),
@@ -64,6 +65,7 @@ class FlashAttention4Backend(BaseAttnBackend):
             max_seqlen_q=metadata.max_seqlen_q,
             softmax_scale=self.scale,
             version=self.version,
+            out=out,
         )
 
     def prepare_metadata(self, batch: Batch) -> None:
@@ -109,7 +111,16 @@ class FlashAttention4Backend(BaseAttnBackend):
     def init_capture_graph(self, max_seq_len: int, bs_list: List[int]) -> None:
         assert self.capture is None, "Capture already initialized."
         max_bs = max(bs_list)
-        capture = FACaptureData.create(max_bs, max_seq_len // self.page_size, self.kvcache.device)
+        capture = FACaptureData.create(
+            max_bs,
+            max_seq_len // self.page_size,
+            self.kvcache.device,
+            out=torch.empty(
+                (max_bs, self.config.num_qo_heads, self.config.head_dim),
+                dtype=self.kvcache.dtype,
+                device=self.kvcache.device,
+            ),
+        )
         self.max_graph_bs = max_bs
         self.capture = capture
         self.capture_bs = sorted(bs_list)
@@ -149,37 +160,33 @@ def _fa_sgl_impl(
     max_seqlen_q: int,
     softmax_scale: float,
     version: int,
-    sm_margin: int = 0,
+    out: torch.Tensor | None = None,
     window_size: Tuple[int, int] = (-1, -1),  # -1 means infinite context window
     softcap: float = 0.0,  # 0.0 means deactivated
-    num_splits: int = 0,  # Can be tuned for speed
+    num_splits: int = 1,
     pack_gqa: bool | None = None,  # Can be tuned for speed
     causal: bool = True,
 ) -> torch.Tensor:
     try:
-        from ..kernel.flash_attention_v4 import (
-            flash_attn_varlen_func,
-            flash_attn_with_kvcache
-        )
+        from ..kernel.flash_attention_v4 import flash_attn_with_kvcache_out
     except ImportError as e:
         raise ImportError(
             "Failed to import Flash Attention 4"
         ) from e
 
-    return flash_attn_with_kvcache(
+    return flash_attn_with_kvcache_out(
         q=q,
         k_cache=k_cache,
         v_cache=v_cache,
-        page_table=page_table,
-        cache_seqlens=cache_seqlens,
+        out=out,
         cu_seqlens_q=cu_seqlens_q,
-        cu_seqlens_k_new=cu_seqlens_k,
+        cache_seqlens=cache_seqlens,
         max_seqlen_q=max_seqlen_q,
+        page_table=page_table,
         softmax_scale=softmax_scale,
-        sm_margin=sm_margin,
         window_size=window_size,
         softcap=softcap,
         num_splits=num_splits,
         pack_gqa=pack_gqa,
-        causal=causal
+        causal=causal,
     )
