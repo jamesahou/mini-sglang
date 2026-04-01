@@ -53,11 +53,7 @@ class FlashAttention4Backend(BaseAttnBackend):
         metadata = batch.attn_metadata
         assert isinstance(metadata, FAMetadata)
         self.kvcache.store_kv(k, v, batch.out_loc, layer_id)
-        out = (
-            self.capture.out[: batch.padded_size]
-            if self.capture is not None and metadata.max_seqlen_q == 1
-            else None
-        )
+        out = self.capture.out[: batch.padded_size] if self.capture is not None else None
         return _fa_sgl_impl(
             q=q,
             k_cache=self.kvcache.k_cache(layer_id),
