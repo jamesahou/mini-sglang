@@ -6,10 +6,8 @@ import torch
 
 try:
     from flash_attn.cute import flash_attn_varlen_func as _flash_attn_varlen_func
-    from flash_attn.cute.interface import _flash_attn_fwd
 except Exception as _e:  # pragma: no cover
     _flash_attn_varlen_func = None
-    _flash_attn_fwd = None
     _flash_attn_import_error = _e
 else:
     _flash_attn_import_error = None
@@ -89,67 +87,6 @@ def flash_attn_varlen_func(
     if isinstance(result, tuple):
         return result[0]
     return result
-
-
-def flash_attn_with_kvcache_out(
-    q: torch.Tensor,
-    k_cache: torch.Tensor,
-    v_cache: torch.Tensor,
-    out: Optional[torch.Tensor] = None,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cache_seqlens: Optional[Union[int, torch.Tensor]] = None,
-    max_seqlen_q: Optional[int] = None,
-    page_table: Optional[torch.Tensor] = None,
-    softmax_scale: Optional[float] = None,
-    causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
-    softcap: float = 0.0,
-    num_splits: int = 1,
-    pack_gqa: Optional[bool] = None,
-    return_softmax_lse: bool = False,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-    """Like flash_attn_with_kvcache but calls _flash_attn_fwd directly,
-    accepting a pre-allocated output tensor to avoid allocation on each forward pass."""
-    if _flash_attn_fwd is None:  # pragma: no cover
-        raise ImportError(
-            "Vendored FlashAttention CUTE is not available."
-        ) from _flash_attn_import_error
-
-    if isinstance(cache_seqlens, int):
-        cache_seqlens = torch.full(
-            (k_cache.shape[0],), cache_seqlens, dtype=torch.int32, device=k_cache.device
-        )
-
-    q, k_cache, v_cache = [_maybe_contiguous(t) for t in (q, k_cache, v_cache)]
-    cu_seqlens_q = _maybe_contiguous(cu_seqlens_q)
-    cache_seqlens = _maybe_contiguous(cache_seqlens)
-    page_table = _maybe_contiguous(page_table)
-
-    window_size_left = None if window_size[0] == -1 else window_size[0]
-    window_size_right = None if window_size[1] == -1 else window_size[1]
-
-    result_out, lse = _flash_attn_fwd(
-        q=q,
-        k=k_cache,
-        v=v_cache,
-        cu_seqlens_q=cu_seqlens_q,
-        seqused_k=cache_seqlens,
-        max_seqlen_q=max_seqlen_q,
-        page_table=page_table,
-        softmax_scale=softmax_scale,
-        causal=causal,
-        softcap=softcap if softcap != 0.0 else None,
-        window_size_left=window_size_left,
-        window_size_right=window_size_right,
-        num_splits=num_splits,
-        pack_gqa=pack_gqa,
-        out=out,
-        return_lse=return_softmax_lse,
-    )
-
-    if return_softmax_lse:
-        return result_out, lse
-    return result_out
 
 
 def flash_attn_with_kvcache(
