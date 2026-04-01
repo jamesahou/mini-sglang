@@ -1,4 +1,5 @@
 import json
+import os
 import statistics
 import time
 from random import randint, seed
@@ -12,7 +13,9 @@ NUM_TRIALS = 5
 NUM_WARMUP = 2
 MAX_INPUT_LEN = 1024
 MAX_OUTPUT_LEN = 1024
-RESULT_FILE = "fa4_minisgl_result.json"
+
+ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "fa4")
+RESULT_FILE = f"minisgl_{ATTN_BACKEND.replace(',', '_')}_result.json"
 
 
 def make_inputs(rng_seed: int):
@@ -30,12 +33,13 @@ def make_inputs(rng_seed: int):
 
 def main():
     print(f"Loading {MODEL} with FA4 backend...")
+    print(f"Attention backend: {ATTN_BACKEND}")
     llm = LLM(
         MODEL,
-        attention_backend="fa4",
+        attention_backend=ATTN_BACKEND,
         max_seq_len_override=4096,
         max_extend_tokens=16384,
-        cuda_graph_max_bs=256,
+        cuda_graph_max_bs=NUM_SEQS,
         page_size=256,
     )
 
@@ -69,7 +73,7 @@ def main():
 
     result = {
         "system": "mini-sglang-james",
-        "backend": "fa4",
+        "backend": ATTN_BACKEND,
         "model": MODEL,
         "num_seqs": NUM_SEQS,
         "total_tokens": total_tokens,
