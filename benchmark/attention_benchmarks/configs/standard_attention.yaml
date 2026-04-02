@@ -1,0 +1,39 @@
+# Standard attention backend benchmark configuration
+# Model: Qwen/Qwen3-14B dimensions
+
+model:
+  num_layers: 40
+  num_q_heads: 40
+  num_kv_heads: 8   # GQA with 5:1 ratio
+  head_dim: 128     # hidden_size=5120 / 40 heads
+  block_size: 16
+
+backends:
+  - fa4
+  - trtllm
+
+batch_specs:
+  # Pure prefill
+  - "q512"          # Small prefill (512 tokens)
+  - "q2k"           # Medium prefill (2048 tokens)
+  - "q4k"           # Large prefill (4096 tokens)
+  - "q8k"           # Very large prefill (8192 tokens)
+
+  # Pure decode
+  - "8q1s1k"        # 8 requests, 1k KV cache each
+  - "16q1s2k"       # 16 requests, 2k KV cache each
+  - "32q1s1k"       # 32 requests, 1k KV cache each
+  - "64q1s4k"       # 64 requests, 4k KV cache each
+
+  # Mixed prefill/decode
+  - "2q2k_8q1s1k"   # 2 prefill + 8 decode
+  - "4q1k_16q1s2k"  # 4 prefill + 16 decode
+
+  # Speculative decode (q <= 8)
+  - "16q4s1k"       # 16 requests, 4 spec tokens, 1k KV cache
+  - "32q4s2k"       # 32 requests, 4 spec tokens, 2k KV cache
+
+device: "cuda:0"
+repeats: 5
+warmup_iters: 3
+profile_memory: false
