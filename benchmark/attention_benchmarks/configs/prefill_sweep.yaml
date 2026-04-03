@@ -1,5 +1,5 @@
 model:
-  num_layers: 1
+  num_layers: 4
   num_q_heads: 40
   num_kv_heads: 8
   head_dim: 128
@@ -19,5 +19,5 @@ batch_specs:
   - "q60000"   # 60000 tokens
 
 device: "cuda:0"
-repeats: 10
-warmup_iters: 3
+repeats: 20
+warmup_iters: 10

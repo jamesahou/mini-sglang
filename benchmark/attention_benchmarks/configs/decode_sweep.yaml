@@ -1,7 +1,7 @@
 # Decode TPS: fixed kv_len=60000, accept_length=4, sweep batch size
 # q_len=4 = speculative decode accept length
 model:
-  num_layers: 1
+  num_layers: 4
   num_q_heads: 40
   num_kv_heads: 8
   head_dim: 128
@@ -29,5 +29,5 @@ model_parameter_sweep:
   label_format: "{backend}_bs{value}"
 
 device: "cuda:0"
-repeats: 10
-warmup_iters: 3
+repeats: 20
+warmup_iters: 10
