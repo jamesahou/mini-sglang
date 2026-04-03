@@ -1,0 +1,33 @@
+# Decode TPS: fixed kv_len=60000, accept_length=4, sweep batch size
+# q_len=4 = speculative decode accept length
+model:
+  num_layers: 1
+  num_q_heads: 40
+  num_kv_heads: 8
+  head_dim: 128
+  block_size: 16
+
+backends:
+  - fa4
+  - trtllm
+
+batch_specs:
+  - "1q4s60000"
+  - "2q4s60000"
+  - "3q4s60000"
+  - "4q4s60000"
+  - "6q4s60000"
+  - "8q4s60000"
+  - "12q4s60000"
+  - "16q4s60000"
+  - "24q4s60000"
+  - "32q4s60000"
+
+model_parameter_sweep:
+  param_name: block_size
+  values: [16, 32, 64, 128]
+  label_format: "{backend}_bs{value}"
+
+device: "cuda:0"
+repeats: 10
+warmup_iters: 3
