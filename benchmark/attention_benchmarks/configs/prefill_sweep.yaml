@@ -21,3 +21,6 @@ batch_specs:
 device: "cuda:0"
 repeats: 20
 warmup_iters: 10
+
+output:
+  csv: "results_minisgl_prefill_sweep.csv"
