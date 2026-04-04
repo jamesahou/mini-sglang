@@ -203,6 +203,15 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     )
 
     parser.add_argument(
+        "--log-stats-interval",
+        type=float,
+        dest="log_stats_interval",
+        default=ServerArgs.log_stats_interval,
+        help="Seconds between throughput log lines (prefill tok/s, gen tok/s, batch size). "
+             "Set to 0 to disable.",
+    )
+
+    parser.add_argument(
         "--cache-type",
         type=str,
         default=ServerArgs.cache_type,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
@@ -71,6 +72,13 @@ class Scheduler(SchedulerIOMixin):
         self.token_pool = self.table_manager.token_pool
         self.prefill_budget = config.max_extend_tokens
         # self.config = config
+
+        # throughput stats
+        self._log_stats_interval = config.log_stats_interval
+        self._stats_last_log = time.monotonic()
+        self._stats_prefill_tokens: int = 0
+        self._stats_output_tokens: int = 0
+        self._stats_requests_finished: int = 0
 
         # Initialize the I/O mixin
         super().__init__(config, self.engine.tp_cpu_group)
@@ -146,6 +154,8 @@ class Scheduler(SchedulerIOMixin):
         with self.cache_manager.lazy_free_region():
             for i, req in enumerate(batch.reqs):
                 if isinstance(req, ChunkedReq):
+                    # count chunked prefill tokens toward prefill throughput
+                    self._stats_prefill_tokens += req.extend_len
                     continue
                 next_token = next_tokens_cpu[i]
                 req.append_host(next_token.unsqueeze(0))
@@ -155,16 +165,47 @@ class Scheduler(SchedulerIOMixin):
                     finished |= next_token == self.eos_token_id
                 reply.append(DetokenizeMsg(uid=req.uid, next_token=next_token, finished=finished))
 
+                if batch.is_prefill:
+                    self._stats_prefill_tokens += req.extend_len
+                else:
+                    self._stats_output_tokens += 1
+
                 # NOTE: overlap scheduling may make the request freed twice, skip second free
                 if finished and req not in self.finished_reqs:
                     self.decode_manager.remove_req(req)
                     self._free_req_resources(req)
                     new_finished_reqs.add(req)
+                    self._stats_requests_finished += 1
                 elif batch.is_prefill:  # for prefill, non-chunk req, cache the prefix
                     self.cache_manager.cache_req(req, finished=False)
 
         self.finished_reqs = new_finished_reqs
         self.send_result(reply)
+        self._maybe_log_stats()
+
+    def _maybe_log_stats(self) -> None:
+        if self._log_stats_interval <= 0:
+            return
+        now = time.monotonic()
+        elapsed = now - self._stats_last_log
+        if elapsed < self._log_stats_interval:
+            return
+
+        prefill_tps = self._stats_prefill_tokens / elapsed
+        gen_tps = self._stats_output_tokens / elapsed
+        req_s = self._stats_requests_finished / elapsed
+        running = len(self.decode_manager.running_reqs) + len(self.prefill_manager.pending_list)
+        logger.info_rank0(
+            f"[Stats] prefill={prefill_tps:.0f} tok/s | "
+            f"gen={gen_tps:.0f} tok/s | "
+            f"finished={req_s:.2f} req/s | "
+            f"running={running}"
+        )
+
+        self._stats_prefill_tokens = 0
+        self._stats_output_tokens = 0
+        self._stats_requests_finished = 0
+        self._stats_last_log = now
 
     def _process_one_msg(self, msg: BaseBackendMsg) -> None:
         if isinstance(msg, BatchBackendMsg):

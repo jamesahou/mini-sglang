@@ -16,6 +16,7 @@ class SchedulerConfig(EngineConfig):
     max_extend_tokens: int = 8192
     cache_type: str = "radix"
     offline_mode: bool = False
+    log_stats_interval: float = 10.0  # seconds between throughput log lines; 0 disables
 
     # networking config
     _unique_suffix: str = field(default_factory=_get_pid_suffix)
