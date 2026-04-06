@@ -293,22 +293,56 @@ def run_attention_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
 
     if backend == "fa4":
         def call_all_layers():
-            for q in q_list:
-                _forward_fa4(
-                    q, kv_caches, page_table, cache_seqlens,
-                    cu_seqlens_q, cu_seqlens_k, max_seqlen_q, scale,
+            for q, (k_cache, v_cache) in zip(q_list, kv_caches):
+                _fa4_with_kvcache(
+                    q=q,
+                    k_cache=k_cache,
+                    v_cache=v_cache,
+                    page_table=page_table,
+                    cache_seqlens=cache_seqlens,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k_new=cu_seqlens_k,
+                    max_seqlen_q=max_seqlen_q,
+                    softmax_scale=scale,
+                    causal=True,
                 )
 
     elif backend == "trtllm":
         workspace = torch.empty(_WORKSPACE_BYTES, dtype=torch.uint8, device=device)
 
         def call_all_layers():
-            for q in q_list:
-                _forward_trtllm(
-                    q, kv_caches, page_table, cache_seqlens,
-                    cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                    scale, workspace, is_decode, batch_size,
-                )
+            for q, (k_cache, v_cache) in zip(q_list, kv_caches):
+                kv_cache = (k_cache, v_cache)
+                if is_decode:
+                    _fi_decode.trtllm_batch_decode_with_kv_cache(
+                        query=q,
+                        kv_cache=kv_cache,
+                        workspace_buffer=workspace,
+                        block_tables=page_table,
+                        seq_lens=cache_seqlens,
+                        max_seq_len=max_seqlen_k,
+                        bmm1_scale=scale,
+                        bmm2_scale=1.0,
+                        kv_layout="NHD",
+                        out_dtype=q.dtype,
+                    )
+                else:
+                    _fi_prefill.trtllm_batch_context_with_kv_cache(
+                        query=q,
+                        kv_cache=kv_cache,
+                        workspace_buffer=workspace,
+                        block_tables=page_table,
+                        seq_lens=cache_seqlens,
+                        max_q_len=max_seqlen_q,
+                        max_kv_len=max_seqlen_k,
+                        bmm1_scale=scale,
+                        bmm2_scale=1.0,
+                        cum_seq_lens_q=cu_seqlens_q,
+                        cum_seq_lens_kv=cu_seqlens_k,
+                        batch_size=batch_size,
+                        kv_layout="NHD",
+                        out_dtype=q.dtype,
+                    )
 
     else:
         raise ValueError(
