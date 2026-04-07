@@ -4,6 +4,7 @@ import time
 from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
+import torch.cuda.nvtx as nvtx
 from minisgl.core import Batch, Req
 from minisgl.env import ENV
 from minisgl.message import (
@@ -95,35 +96,61 @@ class Scheduler(SchedulerIOMixin):
         It will overlap the execution of current batch and processing of last batch's results,
         which can effectively hide CPU latency and improve GPU utilization.
         """
+        nvtx.range_push("overlap_loop")
+
         blocking = not (
             last_data is not None  # don't block if we have a batch to be processed
             or self.prefill_manager.runnable
             or self.decode_manager.runnable
         )
+        nvtx.range_push("receive_msg")
         for msg in self.receive_msg(blocking=blocking):
             self._process_one_msg(msg)
+        nvtx.range_pop()
 
+        nvtx.range_push("schedule_next_batch")
         forward_input = self._schedule_next_batch()
+        nvtx.range_pop()
+
         ongoing_data = None
         if forward_input is not None:
             with self.engine_stream_ctx:  # run the batch in the engine's stream
                 self.engine.stream.wait_stream(self.stream)
+                nvtx.range_push("forward")
                 ongoing_data = (forward_input, self._forward(forward_input))
+                nvtx.range_pop()
 
+        nvtx.range_push("process_last_data")
         self._process_last_data(last_data)
+        nvtx.range_pop()
+
+        nvtx.range_pop()  # overlap_loop
         return ongoing_data
 
     def normal_loop(self) -> None:
+        nvtx.range_push("normal_loop")
+
         blocking = not (self.prefill_manager.runnable or self.decode_manager.runnable)
+        nvtx.range_push("receive_msg")
         for msg in self.receive_msg(blocking=blocking):
             self._process_one_msg(msg)
+        nvtx.range_pop()
 
+        nvtx.range_push("schedule_next_batch")
         forward_input = self._schedule_next_batch()
+        nvtx.range_pop()
+
         ongoing_data = None
         if forward_input is not None:
+            nvtx.range_push("forward")
             ongoing_data = (forward_input, self._forward(forward_input))
+            nvtx.range_pop()
 
+        nvtx.range_push("process_last_data")
         self._process_last_data(ongoing_data)
+        nvtx.range_pop()
+
+        nvtx.range_pop()  # normal_loop
 
     @torch.inference_mode()
     def run_forever(self) -> NoReturn:
@@ -243,16 +270,35 @@ class Scheduler(SchedulerIOMixin):
         self.cache_manager.cache_req(req, finished=True)
 
     def _prepare_batch(self, batch: Batch) -> ForwardInput:
+        nvtx.range_push("prepare_batch")
+
+        nvtx.range_push("pad_batch")
         self.engine.graph_runner.pad_batch(batch)
+        nvtx.range_pop()
+
+        nvtx.range_push("allocate_paged")
         self.cache_manager.allocate_paged(batch.reqs)
+        nvtx.range_pop()
+
+        nvtx.range_push("make_indices")
         batch.positions = _make_positions(batch, self.device)
         input_mapping = _make_input_tuple(batch, self.device)
         write_mapping = _make_write_tuple(batch, self.device)
         batch.out_loc = self.engine.page_table[input_mapping]
+        nvtx.range_pop()
+
+        nvtx.range_push("prepare_metadata")
         self.engine.attn_backend.prepare_metadata(batch)
+        nvtx.range_pop()
+
+        nvtx.range_push("prepare_sampling")
+        sample_args = self.engine.sampler.prepare(batch)
+        nvtx.range_pop()
+
+        nvtx.range_pop()  # prepare_batch
         return ForwardInput(
             batch=batch,
-            sample_args=self.engine.sampler.prepare(batch),
+            sample_args=sample_args,
             input_tuple=input_mapping,
             write_tuple=write_mapping,
         )

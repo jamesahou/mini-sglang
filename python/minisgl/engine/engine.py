@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Any, Dict, NamedTuple, Tuple
 
 import torch
+import torch.cuda.nvtx as nvtx
 from minisgl.attention import create_attention_backend
 from minisgl.core import Batch, Context, Req, set_global_ctx
 from minisgl.distributed import destroy_distributed, enable_pynccl_distributed, set_tp_info
@@ -190,19 +191,33 @@ class Engine:
 
     def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput:
         assert torch.cuda.current_stream() == self.stream
+        phase = "prefill" if batch.is_prefill else "decode"
+        nvtx.range_push(f"forward_batch({phase}, bs={batch.size})")
+
+        nvtx.range_push("model_forward")
         with self.ctx.forward_batch(batch):
             if self.graph_runner.can_use_cuda_graph(batch):
                 logits = self.graph_runner.replay(batch)
             else:
                 logits = self.model.forward()
+        nvtx.range_pop()
 
+        nvtx.range_push("complete_one")
         for req in batch.reqs:
             req.complete_one()
+        nvtx.range_pop()
 
+        nvtx.range_push("sample")
         next_tokens_gpu = self.sampler.sample(logits[: batch.size], args).to(torch.int32)
+        nvtx.range_pop()
+
+        nvtx.range_push("copy_to_cpu")
         next_tokens_cpu = next_tokens_gpu.to("cpu", non_blocking=True)
         copy_done_event = torch.cuda.Event()
         copy_done_event.record(self.stream)
+        nvtx.range_pop()
+
+        nvtx.range_pop()  # forward_batch
         return ForwardOutput(next_tokens_gpu, next_tokens_cpu, copy_done_event)
 
     def shutdown(self) -> None:

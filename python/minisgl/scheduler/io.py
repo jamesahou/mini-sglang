@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final, List
 
 import torch
+import torch.cuda.nvtx as nvtx
 from minisgl.message import BaseBackendMsg, BaseTokenizerMsg, BatchTokenizerMsg, DetokenizeMsg
 from minisgl.utils import ZmqPubQueue, ZmqPullQueue, ZmqPushQueue, ZmqSubQueue, init_logger
 
@@ -77,12 +78,14 @@ class SchedulerIOMixin:
         self.tp_cpu_group.barrier().wait()
 
     def _recv_msg_single_rank(self, blocking: bool = False) -> List[BaseBackendMsg]:
+        nvtx.range_push("zmq_recv" + ("_blocking" if blocking else ""))
         pending_msgs: List[BaseBackendMsg] = []
         if blocking:
             self.run_when_idle()
             pending_msgs.append(self._recv_from_tokenizer.get())
         while not self._recv_from_tokenizer.empty():
             pending_msgs.append(self._recv_from_tokenizer.get())
+        nvtx.range_pop()
         return pending_msgs
 
     def _recv_msg_multi_rank0(self, blocking: bool = False) -> List[BaseBackendMsg]:
@@ -124,10 +127,12 @@ class SchedulerIOMixin:
     def _reply_tokenizer_rank0(self, reply: List[DetokenizeMsg]) -> None:
         num_reply = len(reply)
         logger.debug_rank0(f"Replying to tokenizer: {num_reply} messages")
+        nvtx.range_push(f"zmq_send({num_reply})")
         if num_reply == 1:
             self._send_into_tokenizer.put(reply[0])
         elif num_reply > 1:
             self._send_into_tokenizer.put(BatchTokenizerMsg(data=reply))  # type: ignore
+        nvtx.range_pop()
 
     def _reply_tokenizer_rank1(self, reply: List[DetokenizeMsg]) -> None:
         _ = reply  # do nothing for non-primary ranks
