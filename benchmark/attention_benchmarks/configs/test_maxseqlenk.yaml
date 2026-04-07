@@ -1,0 +1,21 @@
+# Quick A/B test: max_seqlen_k inflation impact
+model:
+  num_layers: 1
+  num_q_heads: 40
+  num_kv_heads: 8
+  head_dim: 128
+  block_size: 128
+
+backends:
+  - fa4
+
+batch_specs:
+  - "1q1s60000"
+  - "4q1s60000"
+  - "16q1s60000"
+  - "64q1s60000"
+  - "128q1s60000"
+
+device: "cuda:0"
+repeats: 20
+warmup_iters: 10
