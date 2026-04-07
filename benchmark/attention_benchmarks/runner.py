@@ -18,10 +18,10 @@ from common import BenchmarkConfig, BenchmarkResult, get_attention_scale
 
 try:
     from minisgl.kernel.flash_attention_v4 import (
-        flash_attn_with_kvcache as _fa4_with_kvcache,
+        flash_attn_varlen_func as _fa4_varlen_func,
     )
 except ImportError:
-    _fa4_with_kvcache = None
+    _fa4_varlen_func = None
 
 try:
     import flashinfer.decode as _fi_decode
@@ -127,23 +127,24 @@ def _forward_fa4(
     page_table: torch.Tensor,
     cache_seqlens: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
-    cu_seqlens_k: torch.Tensor,
     max_seqlen_q: int,
+    max_seqlen_k: int,
     scale: float,
 ):
-    _require(_fa4_with_kvcache, "minisgl.kernel.flash_attention_v4")
+    _require(_fa4_varlen_func, "minisgl.kernel.flash_attention_v4")
     for k_cache, v_cache in kv_caches:
-        _fa4_with_kvcache(
+        _fa4_varlen_func(
             q=q,
-            k_cache=k_cache,
-            v_cache=v_cache,
-            page_table=page_table,
-            cache_seqlens=cache_seqlens,
+            k=k_cache,
+            v=v_cache,
             cu_seqlens_q=cu_seqlens_q,
-            cu_seqlens_k_new=cu_seqlens_k,
+            seqused_k=cache_seqlens,
             max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
+            page_table=page_table,
             softmax_scale=scale,
             causal=True,
+            num_splits=1,
         )
 
 
@@ -292,19 +293,22 @@ def run_attention_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
     backend = config.backend.lower()
 
     if backend == "fa4":
+        _require(_fa4_varlen_func, "minisgl.kernel.flash_attention_v4")
+
         def call_all_layers():
             for q, (k_cache, v_cache) in zip(q_list, kv_caches):
-                _fa4_with_kvcache(
+                _fa4_varlen_func(
                     q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    page_table=page_table,
-                    cache_seqlens=cache_seqlens,
+                    k=k_cache,
+                    v=v_cache,
                     cu_seqlens_q=cu_seqlens_q,
-                    cu_seqlens_k_new=cu_seqlens_k,
+                    seqused_k=cache_seqlens,
                     max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
+                    page_table=page_table,
                     softmax_scale=scale,
                     causal=True,
+                    num_splits=1,
                 )
 
     elif backend == "trtllm":
